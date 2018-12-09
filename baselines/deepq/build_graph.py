@@ -439,7 +439,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
                 done_mask_ph,
                 importance_weights_ph
             ],
-            outputs=td_error,
+            #outputs=td_error,
+            outputs=[tf.summary.histogram("rewards", rew_t_ph, collections=[]), weighted_error, tf.reduce_mean(q_t_selected), tf.reduce_mean(q_t_selected_target)],
             updates=[optimize_expr]
         )
         update_target = U.function([], [], updates=[update_target_expr])
