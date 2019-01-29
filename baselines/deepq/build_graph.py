@@ -181,7 +181,8 @@ def build_act(make_obs_ph, q_func, num_actions, scope="deepq", reuse=None):
         eps = tf.get_variable("eps", (), initializer=tf.constant_initializer(0))
 
         q_values = q_func(observations_ph.get(), num_actions, scope="q_func")
-        deterministic_actions = tf.argmax(q_values, axis=1)
+        ##deterministic_actions = tf.argmax(q_values, axis=1)
+        deterministic_actions = tf.argmax(tf.reshape(q_values, [-1, num_actions]), axis=1)
 
         batch_size = tf.shape(observations_ph.get())[0]
         random_actions = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=num_actions, dtype=tf.int64)
@@ -394,12 +395,18 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
 
         # q scores for actions which we know were selected in the given state.
         q_t_selected = tf.reduce_sum(q_t * tf.one_hot(act_t_ph, num_actions), 1)
+        ##row_ids = tf.range(tf.shape(q_t)[0])
+        ##idx = tf.stack([row_ids, act_t_ph], axis=1)
+        ##q_t_selected = tf.gather_nd(tf.reshape(q_t, [-1, num_actions]), idx)
 
         # compute estimate of best possible value starting from state at t + 1
         if double_q:
             q_tp1_using_online_net = q_func(obs_tp1_input.get(), num_actions, scope="q_func", reuse=True)
             q_tp1_best_using_online_net = tf.argmax(q_tp1_using_online_net, 1)
+            ##q_tp1_best_using_online_net = tf.argmax(tf.reshape(q_tp1_using_online_net, [-1, num_actions]), 1)
             q_tp1_best = tf.reduce_sum(q_tp1 * tf.one_hot(q_tp1_best_using_online_net, num_actions), 1)
+            ##idx = tf.stack([tf.cast(row_ids, tf.int64), q_tp1_best_using_online_net], axis=1)
+            ##q_tp1_best = tf.gather_nd(tf.reshape(q_tp1, [-1, num_actions]), idx)
         else:
             q_tp1_best = tf.reduce_max(q_tp1, 1)
         q_tp1_best_masked = (1.0 - done_mask_ph) * q_tp1_best
