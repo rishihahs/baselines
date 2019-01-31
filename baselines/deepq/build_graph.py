@@ -384,6 +384,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         obs_tp1_input = make_obs_ph("obs_tp1")
         done_mask_ph = tf.placeholder(tf.float32, [None], name="done")
         importance_weights_ph = tf.placeholder(tf.float32, [None], name="weight")
+        # Actions in output grid that are not valid
+        unused_actions_mask = tf.placeholder(tf.int32, [num_actions], name="unused_actions_mask")
 
         # q network evaluation
         q_t = q_func(obs_t_input.get(), num_actions, scope="q_func", reuse=True)  # reuse parameters from act
@@ -402,9 +404,14 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         # compute estimate of best possible value starting from state at t + 1
         if double_q:
             q_tp1_using_online_net = q_func(obs_tp1_input.get(), num_actions, scope="q_func", reuse=True)
+
+            # Filter out unused actions
+            q_tp1_using_online_net = tf.boolean_mask(q_tp1_using_online_net, 1-unused_actions_mask, axis=1)
+            q_tp1 = tf.boolean_mask(q_tp1, 1-unused_actions_mask, axis=1)
+
             q_tp1_best_using_online_net = tf.argmax(q_tp1_using_online_net, 1)
             ##q_tp1_best_using_online_net = tf.argmax(tf.reshape(q_tp1_using_online_net, [-1, num_actions]), 1)
-            q_tp1_best = tf.reduce_sum(q_tp1 * tf.one_hot(q_tp1_best_using_online_net, num_actions), 1)
+            q_tp1_best = tf.reduce_sum(q_tp1 * tf.one_hot(q_tp1_best_using_online_net, tf.shape(q_tp1)[1]), 1)
             ##idx = tf.stack([tf.cast(row_ids, tf.int64), q_tp1_best_using_online_net], axis=1)
             ##q_tp1_best = tf.gather_nd(tf.reshape(q_tp1, [-1, num_actions]), idx)
         else:
@@ -444,7 +451,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
                 rew_t_ph,
                 obs_tp1_input,
                 done_mask_ph,
-                importance_weights_ph
+                importance_weights_ph,
+                unused_actions_mask
             ],
             #outputs=td_error,
             outputs=[tf.summary.histogram("rewards", rew_t_ph, collections=[]), weighted_error, tf.reduce_mean(q_t_selected), tf.reduce_mean(q_t_selected_target)],
@@ -453,5 +461,6 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         update_target = U.function([], [], updates=[update_target_expr])
 
         q_values = U.function([obs_t_input], q_t)
+        max_q_values = U.function([obs_t_input, unused_actions_mask], tf.reduce_max(tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1), 1))
 
-        return act_f, train, update_target, {'q_values': q_values}
+        return act_f, train, update_target, {'q_values': q_values, 'max_q_values': max_q_values}
