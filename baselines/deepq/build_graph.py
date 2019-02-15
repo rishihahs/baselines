@@ -177,26 +177,33 @@ def build_act(make_obs_ph, q_func, num_actions, scope="deepq", reuse=None):
         observations_ph = make_obs_ph("observation")
         stochastic_ph = tf.placeholder(tf.bool, (), name="stochastic")
         update_eps_ph = tf.placeholder(tf.float32, (), name="update_eps")
+        # Actions in output grid that are not valid
+        unused_actions_neginf_mask = tf.placeholder(tf.float32, [num_actions], name="unused_actions_mask")
 
         eps = tf.get_variable("eps", (), initializer=tf.constant_initializer(0))
 
         q_values = q_func(observations_ph.get(), num_actions, scope="q_func")
         ##deterministic_actions = tf.argmax(q_values, axis=1)
-        deterministic_actions = tf.argmax(tf.reshape(q_values, [-1, num_actions]), axis=1)
+        # Filter out unused actions
+        deterministic_actions = tf.argmax(tf.reshape(q_values, [-1, num_actions]) + unused_actions_neginf_mask, axis=1)
 
+        # We want random actions without the invalid ones
         batch_size = tf.shape(observations_ph.get())[0]
-        random_actions = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=num_actions, dtype=tf.int64)
+        logprobs = tf.tile([10.], [num_actions]) + unused_actions_neginf_mask  # -inf is the logprob of 0
+        random_actions = tf.reshape(tf.random.multinomial(logprobs[tf.newaxis], batch_size), (batch_size,))
+
+        ##random_actions = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=num_actions, dtype=tf.int64)
         chose_random = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=1, dtype=tf.float32) < eps
         stochastic_actions = tf.where(chose_random, random_actions, deterministic_actions)
 
         output_actions = tf.cond(stochastic_ph, lambda: stochastic_actions, lambda: deterministic_actions)
         update_eps_expr = eps.assign(tf.cond(update_eps_ph >= 0, lambda: update_eps_ph, lambda: eps))
-        _act = U.function(inputs=[observations_ph, stochastic_ph, update_eps_ph],
+        _act = U.function(inputs=[observations_ph, unused_actions_neginf_mask, stochastic_ph, update_eps_ph],
                          outputs=output_actions,
                          givens={update_eps_ph: -1.0, stochastic_ph: True},
                          updates=[update_eps_expr])
-        def act(ob, stochastic=True, update_eps=-1):
-            return _act(ob, stochastic, update_eps)
+        def act(ob, unused_actions_neginf_mask, stochastic=True, update_eps=-1):
+            return _act(ob, unused_actions_neginf_mask, stochastic, update_eps)
         return act
 
 
