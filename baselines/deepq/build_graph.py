@@ -393,6 +393,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         importance_weights_ph = tf.placeholder(tf.float32, [None], name="weight")
         # Actions in output grid that are not valid
         unused_actions_mask = tf.placeholder(tf.int32, [num_actions], name="unused_actions_mask")
+        rew_avg = tf.Variable(0., name='rew_avg')
+        rew_avg_next = tf.Variable(0., name='rew_avg_next')
 
         # q network evaluation
         q_t = q_func(obs_t_input.get(), num_actions, scope="q_func", reuse=True)  # reuse parameters from act
@@ -426,12 +428,22 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
         q_tp1_best_masked = (1.0 - done_mask_ph) * q_tp1_best
 
         # compute RHS of bellman equation
-        q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked
+        ##q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked
+        #with tf.control_dependencies([rew_avg.assign(rew_avg_next), tf.print(rew_avg)]):
+        with tf.control_dependencies([rew_avg.assign(rew_avg_next)]):
+            q_t_selected_target = rew_t_ph - rew_avg + q_tp1_best_masked
 
         # compute the error (potentially clipped)
-        td_error = q_t_selected - tf.stop_gradient(q_t_selected_target)
+        ##td_error = q_t_selected - tf.stop_gradient(q_t_selected_target)
+        # For R Learning
+        td_error = tf.stop_gradient(q_t_selected_target) - q_t_selected
         errors = U.huber_loss(td_error)
+        #errors = tf.losses.mean_squared_error(labels=tf.stop_gradient(q_t_selected_target), predictions=q_t_selected)
         weighted_error = tf.reduce_mean(importance_weights_ph * errors)
+
+        # R Learning
+        tf.summary.scalar('rew_avg', rew_avg)
+        rew_avg_next_op = rew_avg_next.assign_add(0.001*tf.reduce_mean(td_error))
 
         # compute optimization op (potentially with gradient clipping)
         if grad_norm_clipping is not None:
@@ -439,9 +451,11 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
             for i, (grad, var) in enumerate(gradients):
                 if grad is not None:
                     gradients[i] = (tf.clip_by_norm(grad, grad_norm_clipping), var)
-            optimize_expr = optimizer.apply_gradients(gradients)
+            with tf.control_dependencies([rew_avg_next_op]):
+                optimize_expr = optimizer.apply_gradients(gradients)
         else:
-            optimize_expr = optimizer.minimize(weighted_error, var_list=q_func_vars)
+            with tf.control_dependencies([rew_avg_next_op]):
+                optimize_expr = optimizer.minimize(weighted_error, var_list=q_func_vars)
 
         # update_target_fn will be called periodically to copy Q network to target Q network
         update_target_expr = []
