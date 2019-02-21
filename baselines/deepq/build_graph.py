@@ -189,7 +189,7 @@ def build_act(make_obs_ph, q_func, num_actions, scope="deepq", reuse=None):
 
         # We want random actions without the invalid ones
         batch_size = tf.shape(observations_ph.get())[0]
-        logprobs = tf.tile([10.], [num_actions]) + unused_actions_neginf_mask  # -inf is the logprob of 0
+        logprobs = tf.tile([0.], [num_actions]) + unused_actions_neginf_mask  # -inf is the logprob of 0
         random_actions = tf.reshape(tf.random.multinomial(logprobs[tf.newaxis], batch_size), (batch_size,))
 
         ##random_actions = tf.random_uniform(tf.stack([batch_size]), minval=0, maxval=num_actions, dtype=tf.int64)
@@ -417,6 +417,10 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
             # Filter out unused actions
             q_tp1_using_online_net = tf.boolean_mask(q_tp1_using_online_net, 1-unused_actions_mask, axis=1)
             q_tp1 = tf.boolean_mask(q_tp1, 1-unused_actions_mask, axis=1)
+            q_t_filtered = tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1)
+
+            # Best q's -- useful for deciding whether to update R Learning
+            q_t_best = tf.reduce_max(q_t_filtered, 1)
 
             q_tp1_best_using_online_net = tf.argmax(q_tp1_using_online_net, 1)
             ##q_tp1_best_using_online_net = tf.argmax(tf.reshape(q_tp1_using_online_net, [-1, num_actions]), 1)
@@ -443,7 +447,15 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
 
         # R Learning
         tf.summary.scalar('rew_avg', rew_avg)
-        rew_avg_next_op = rew_avg_next.assign_add(0.001*tf.reduce_mean(td_error))
+
+        use_for_reward = tf.cast(tf.abs(q_t_selected - q_t_best) < 0.10*tf.abs(q_t_best), tf.float32)
+        num_valid_rewards = tf.reduce_sum(use_for_reward)
+
+        #with tf.control_dependencies([tf.print(num_valid_rewards)]):
+        rew_avg_next_op = rew_avg_next.assign_add(tf.cond(num_valid_rewards > 0,
+                                                          lambda: 0.001*(1/num_valid_rewards)*tf.reduce_sum(use_for_reward * td_error),
+                                                          lambda: 0.0))
+        #rew_avg_next_op = rew_avg_next.assign_add(0.001*tf.reduce_mean(td_error))
 
         # compute optimization op (potentially with gradient clipping)
         if grad_norm_clipping is not None:
