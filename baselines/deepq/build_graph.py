@@ -453,7 +453,7 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
 
         #with tf.control_dependencies([tf.print(num_valid_rewards)]):
         rew_avg_next_op = rew_avg_next.assign_add(tf.cond(num_valid_rewards > 0,
-                                                          lambda: 0.001*(1/num_valid_rewards)*tf.reduce_sum(use_for_reward * td_error),
+                                                          lambda: 0.0001*(1/num_valid_rewards)*tf.reduce_sum(use_for_reward * td_error),
                                                           lambda: 0.0))
         #rew_avg_next_op = rew_avg_next.assign_add(0.001*tf.reduce_mean(td_error))
 
