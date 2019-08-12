@@ -391,8 +391,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, avg_reward_learning
         obs_tp1_input = make_obs_ph("obs_tp1")
         done_mask_ph = tf.placeholder(tf.float32, [None], name="done")
         importance_weights_ph = tf.placeholder(tf.float32, [None], name="weight")
-        # Actions in output grid that are not valid
-        unused_actions_mask = tf.placeholder(tf.int32, [num_actions], name="unused_actions_mask")
+        # Actions in output grid that are not valid are neginf
+        unused_actions_mask = tf.placeholder(tf.float32, [None, num_actions], name="unused_actions_mask")
         rew_avg = tf.Variable(0., name='rew_avg')
         rew_avg_next = tf.Variable(0., name='rew_avg_next')
 
@@ -415,9 +415,11 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, avg_reward_learning
             q_tp1_using_online_net = q_func(obs_tp1_input.get(), num_actions, scope="q_func", reuse=True)
 
             # Filter out unused actions
-            q_tp1_using_online_net = tf.boolean_mask(q_tp1_using_online_net, 1-unused_actions_mask, axis=1)
-            q_tp1 = tf.boolean_mask(q_tp1, 1-unused_actions_mask, axis=1)
-            q_t_filtered = tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1)
+            #q_tp1_using_online_net = tf.boolean_mask(q_tp1_using_online_net, 1-unused_actions_mask, axis=1)
+            #q_tp1 = tf.boolean_mask(q_tp1, 1-unused_actions_mask, axis=1)
+            #q_t_filtered = tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1)
+            q_tp1_using_online_net = q_tp1_using_online_net + unused_actions_mask
+            q_t_filtered = q_t + unused_actions_mask
 
             # Best q's -- useful for deciding whether to update R Learning
             q_t_best = tf.reduce_max(q_t_filtered, 1)
@@ -448,8 +450,8 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, avg_reward_learning
         # R Learning
         tf.summary.scalar('rew_avg', rew_avg)
 
-        #use_for_reward = tf.cast(tf.abs(q_t_selected - q_t_best) < 0.10*tf.abs(q_t_best), tf.float32)
-        use_for_reward = tf.cast(tf.abs(q_t_selected - q_t_best) < 1e-6, tf.float32)
+        use_for_reward = tf.cast(tf.abs(q_t_selected - q_t_best) < 0.10*tf.abs(q_t_best), tf.float32)
+        #use_for_reward = tf.cast(tf.abs(q_t_selected - q_t_best) < 1e-6, tf.float32)
         num_valid_rewards = tf.reduce_sum(use_for_reward)
 
         #with tf.control_dependencies([tf.print(num_valid_rewards)]):
@@ -495,6 +497,7 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, avg_reward_learning
         update_target = U.function([], [], updates=[update_target_expr])
 
         q_values = U.function([obs_t_input], q_t)
-        max_q_values = U.function([obs_t_input, unused_actions_mask], tf.reduce_max(tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1), 1))
+        #max_q_values = U.function([obs_t_input, unused_actions_mask], tf.reduce_max(tf.boolean_mask(q_t, 1-unused_actions_mask, axis=1), 1))
+        max_q_values = U.function([obs_t_input, unused_actions_mask], tf.reduce_max(q_t + unused_actions_mask, 1))
 
         return act_f, train, update_target, {'q_values': q_values, 'max_q_values': max_q_values}
